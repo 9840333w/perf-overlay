@@ -1,0 +1,5 @@
+*.bat  -text
+*.ico  -text
+*.dll  -text
+*.exe  -text
+*.png  -text

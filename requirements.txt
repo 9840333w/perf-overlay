@@ -1,0 +1,5 @@
+# 悬浮窗依赖（「安装依赖.bat」会自动装这几个）
+psutil>=5.9
+pythonnet>=3.0.3
+pywin32>=306
+pillow>=9.0
