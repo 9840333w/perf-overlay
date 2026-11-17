@@ -10,7 +10,7 @@
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/Performance-Testing/releases/latest) 中的 `性能悬浮窗-免安装版-v1.0.0.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（约 36 MB） |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/Performance-Testing/releases/latest) 中的 `perf-overlay-portable-v1.0.0.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
 | 脚本版（本仓库内容） | 直接下载仓库 ZIP 或 `git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
