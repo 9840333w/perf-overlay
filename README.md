@@ -1,5 +1,7 @@
 # 性能悬浮窗
 
+Lightweight transparent performance overlay for Windows games — live CPU/GPU temperature, usage, memory and FPS on top of the game.
+
 面向游戏的实时性能叠加层：背景全透明，字号可以很小，按住文字即可拖动定位，显示哪几项自己勾选，
 标签与数值分色显示（例如「CPU温度：`80℃`」两段颜色不同）。
 
@@ -16,8 +18,8 @@
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/Performance-Testing/releases/latest) 中的 `perf-overlay-portable-v1.0.0.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/Performance-Testing/releases/latest) 中的 `perf-overlay-script-v1.0.0.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.0.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.0.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -124,16 +126,20 @@ pyinstaller --noconfirm --clean --windowed --uac-admin --name 性能悬浮窗 --
 `vendor\` 与 `assets\` 作为外置文件与 exe 同级放置，不内嵌进单文件包，避免每次运行向临时目录解压。
 注意事项见 [使用说明.md](使用说明.md) 的「构建」一节。
 
-## 第三方组件
+## 许可
+
+本项目源代码采用 [MIT 许可](LICENSE)。随程序分发的第三方组件保持各自原许可，
+完整清单见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)，摘要如下：
 
 | 组件 | 用途 | 许可 |
 |---|---|---|
-| [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) | 温度 / 占用率 / 功耗采集 | MPL 2.0 |
-| [Intel PresentMon](https://github.com/game-engine-resources/PresentMon) | 帧率逐帧统计 | MIT |
+| [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) | 温度 / 占用率 / 功耗采集 | MPL-2.0 |
+| [HidSharp](https://github.com/IntergatedCircuits/HidSharp) | USB HID 设备访问（被上项依赖） | Apache-2.0 |
+| [Intel PresentMon](https://github.com/GameTechDev/PresentMon) | 帧率逐帧统计 | MIT |
 | [psutil](https://github.com/giampaolo/psutil) | CPU 占用率、内存 | BSD-3-Clause |
 | [pythonnet](https://github.com/pythonnet/pythonnet) | 加载 .NET 监测库 | MIT |
 | [pywin32](https://github.com/mhammond/pywin32) | 托盘图标、全局热键 | PSF |
-| [Pillow](https://github.com/python-pillow/Pillow) | 托盘图标绘制 | MIT 类许可 |
+| [Pillow](https://github.com/python-pillow/Pillow) | 托盘图标绘制 | MIT-CMU |
 
 ## 环境要求
 
