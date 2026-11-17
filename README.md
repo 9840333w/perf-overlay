@@ -6,12 +6,18 @@
 窗口无底板、不抢焦点、支持鼠标点击穿透，不会遮挡操作。程序不联网、不写注册表、不安装服务或驱动、
 不设置开机自启，退出后温度采集与帧率子进程立即全部释放，删除目录即为彻底卸载。
 
+## 效果预览
+
+默认六项、竖排、8 磅字号，桌面空闲时的实际显示：
+
+![悬浮窗实际效果](docs/overlay-preview.png)
+
 ## 下载与版本
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
 | 免安装 exe 版 | [Releases](https://github.com/9840333w/Performance-Testing/releases/latest) 中的 `perf-overlay-portable-v1.0.0.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | 直接下载仓库 ZIP 或 `git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/Performance-Testing/releases/latest) 中的 `perf-overlay-script-v1.0.0.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -52,6 +58,17 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 再点一次存好位置回到全透明。位置每次都会写进 `config.json`。
 
 设置面板共五页：显示项、外观、帧率与采样、位置与热键、状态。详细参数见 [使用说明.md](使用说明.md)。
+
+<table>
+<tr>
+<td width="470"><img src="docs/settings-items.png" alt="设置面板：显示项"></td>
+<td width="470"><img src="docs/settings-appearance.png" alt="设置面板：外观"></td>
+</tr>
+<tr>
+<td align="center">显示项：勾选项目、逐项数值颜色、紧凑标签、文字描边、超阈值变红、CPU 温度来源</td>
+<td align="center">外观：字号、行距、横排项间距、透明度、排列方式、背景、温度单位、内存显示方式与实时预览</td>
+</tr>
+</table>
 
 ## 数据来源
 
