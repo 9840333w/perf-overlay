@@ -335,8 +335,8 @@ class Overlay:
         self.hub.start()
         st = self.hub.status
         log(f"启动 pid={os.getpid()} 管理员={st.get('admin')} LHM={st.get('lhm')} "
-            f"ACPI热区={st.get('acpi')} 热区名={st.get('acpi_zone')} "
-            f"CPU温度来源={st.get('cpu_temp_from') or st.get('acpi_error')} "
+            f"热区={st.get('thermal')}/{st.get('thermal_channel')} 热区名={st.get('thermal_zone')} "
+            f"CPU温度来源={st.get('cpu_temp_from') or st.get('thermal_error')} "
             f"显卡={st.get('gpu_name')}")
         if self.cfg["enabled"].get("fps"):
             self.fpsmon.start()
@@ -924,11 +924,12 @@ class Overlay:
         srcrow = ttk.Frame(src)
         srcrow.pack(fill="x", padx=8, pady=4)
         self._radio(srcrow, "来源", [("自动", "auto"), ("仅驱动", "lhm"),
-                                    ("仅ACPI热区", "acpi"), ("不读", "off")],
+                                    ("仅热区", "acpi"), ("不读", "off")],
                     "cpu_temp_source")
         ttk.Label(src, foreground="#555", justify="left", text=(
             "自动：优先使用 LibreHardwareMonitor 的驱动读数；不可用时改用\n"
-            "ACPI 热区温度。两者都需要管理员权限，普通权限下该项显示 --。")
+            "ACPI 热区温度。热区走系统性能计数器，普通权限也能读；\n"
+            "驱动读数需要管理员权限。取不到时显示 --，不会重复上次的值。")
             ).pack(anchor="w", padx=8, pady=(0, 6))
 
     def _build_look_tab(self, parent) -> None:
@@ -1332,24 +1333,25 @@ class Overlay:
     def _status_text(self) -> str:
         st = self.hub.status
         lines = []
-        lines.append(f"权限：{'管理员' if st.get('admin') else '普通用户（CPU 温度需要管理员权限）'}")
+        lines.append(f"权限：{'管理员' if st.get('admin') else '普通用户（驱动读数不可用，CPU 温度改用热区计数器）'}")
         if st.get("lhm"):
             lines.append(f"温度/占用：LibreHardwareMonitor 已加载，显卡 {st.get('gpu_name') or '未知'}")
         else:
             lines.append(f"温度/占用：LibreHardwareMonitor 不可用（{st.get('lhm_error')}）"
                          + ("，GPU 已改用 nvidia-smi" if st.get("nvsmi") else ""))
-        if not st.get("admin"):
-            lines.append("CPU温度：需要管理员权限，请关掉本程序后双击「启动(管理员).bat」。")
+        from_ = st.get("cpu_temp_from")
+        if from_ == "lhm":
+            lines.append("CPU温度：来自 LibreHardwareMonitor 驱动读数。")
+        elif st.get("thermal"):
+            note = f"；最近一次读取失败：{st.get('thermal_error')}" if st.get("thermal_error") else ""
+            lines.append(f"CPU温度：来自 ACPI 热区（通道 {st.get('thermal_channel')}，"
+                         f"实例 {st.get('thermal_zone')}）{note}")
+        elif not st.get("admin"):
+            lines.append("CPU温度：无可用来源。驱动读数需要管理员权限，"
+                         "请关掉本程序后双击「启动(管理员).bat」。")
         else:
-            from_ = st.get("cpu_temp_from")
-            if st.get("acpi"):
-                lines.append(f"CPU温度：来自 ACPI 热区（{st.get('acpi_zone')}）——"
-                             "这台机器的 ring0 驱动被系统拦住，LibreHardwareMonitor 读不到 MSR 温度。")
-            elif from_ == "lhm":
-                lines.append("CPU温度：来自 LibreHardwareMonitor 驱动读数。")
-            else:
-                lines.append("CPU温度：管理员权限已就绪，但两个数据源均无返回值（"
-                             f"LHM={st.get('lhm_error')}，ACPI={st.get('acpi_error')}）")
+            lines.append("CPU温度：两个数据源均无返回值（"
+                         f"LHM={st.get('lhm_error')}，热区={st.get('thermal_error')}）")
         fstat = self.fpsmon.status
         if not self.cfg["enabled"].get("fps"):
             lines.append("帧率：已关闭（勾选后才会启动 presentmon.exe 子进程）")

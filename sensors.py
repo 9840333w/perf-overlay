@@ -9,7 +9,7 @@
 数据源：
   CPU/GPU 温度与占用率、显存、功耗 -> vendor/lhm/LibreHardwareMonitorLib.dll（pythonnet 进程内调用）
   GPU 替代来源                    -> nvidia-smi
-  CPU 温度替代来源                -> WMI ACPI 热区（需管理员）
+  CPU 温度替代来源                -> ACPI 热区（win32pdh 计数器，普通权限可读；回退 WMI）
   CPU 占用率、内存                 -> psutil
 """
 
@@ -296,27 +296,89 @@ class NvsmiSource:
         with self._lock:
             return dict(self._values)
 
-class AcpiThermalSource:
-    """ACPI 热区温度（WMI root\\wmi : MSAcpi_ThermalZoneTemperature）。
+class ThermalZoneSource:
+    """ACPI 热区温度。
 
-    作为 LibreHardwareMonitor 驱动读数不可用时的替代来源：部分平台或系统策略会阻止
-    ring0 驱动加载，MSR 温度无法读取，而 ACPI 热区在管理员权限下仍然可读。
-    需要管理员权限，普通权限下返回“拒绝访问”。
+    优先使用 win32pdh 性能计数器（Thermal Zone Information\\Temperature）：普通权限即可读取，
+    不经过 WMI 服务，也就不会出现 WMI 超时。计数器不存在的系统回退到
+    WMI root\\wmi : MSAcpi_ThermalZoneTemperature（需要管理员权限）。
+
+    读数失败时立即清空缓存值：宁可界面显示 --，也不会重复输出上一次的历史数值。
     """
 
     name = "acpi-thermalzone"
+    PDH_OBJECTS = ("Thermal Zone Information", "热区信息")
+    PDH_COUNTER = "Temperature"
+    STALE_LIMIT = 3.0
 
     def __init__(self) -> None:
         self.available = False
         self.error: str | None = None
         self.zone: str | None = None
-        self._svc = None
+        self.channel: str | None = None       # pdh / wmi
         self._lock = threading.Lock()
         self._values: dict[str, float] = {}
         self._last = 0.0
+        self._last_ok = 0.0
         self._min_interval = 1.0
+        self._pdh = None
+        self._svc = None
 
+    # ---------------------------------------------------------------- 打开
     def open(self) -> bool:
+        if self._open_pdh():
+            self.channel = "pdh"
+        elif self._open_wmi():
+            self.channel = "wmi"
+        else:
+            self.error = self.error or "热区温度不可用（PDH 与 WMI 均无返回值）"
+            return False
+        self.update()
+        with self._lock:
+            self.available = bool(self._values)
+        return self.available
+
+    def _open_pdh(self) -> bool:
+        try:
+            import win32pdh
+        except Exception as exc:
+            self.error = "win32pdh 不可用: %s" % type(exc).__name__
+            return False
+        try:
+            objects = win32pdh.EnumObjects(None, None, 0)
+        except Exception as exc:
+            self.error = "PDH 枚举失败: %s" % type(exc).__name__
+            return False
+        obj = next((hint for hint in self.PDH_OBJECTS if hint in objects), None)
+        if obj is None:
+            obj = next((n for n in objects if "hermal" in n or "热区" in n), None)
+        if obj is None:
+            self.error = "系统没有 Thermal Zone Information 计数器"
+            return False
+        try:
+            instances = win32pdh.EnumObjectItems(None, None, obj, win32pdh.PERF_DETAIL_WIZARD)[1]
+        except Exception as exc:
+            self.error = "PDH 计数器枚举失败: %s" % type(exc).__name__
+            return False
+        query = win32pdh.OpenQuery(None)
+        counters = []
+        for inst in instances:
+            try:
+                path = win32pdh.MakeCounterPath((None, obj, inst, None, -1, self.PDH_COUNTER))
+                counters.append((inst, win32pdh.AddCounter(query, path)))
+            except Exception:
+                continue
+        if not counters:
+            try:
+                win32pdh.CloseQuery(query)
+            except Exception:
+                pass
+            self.error = "PDH 热区计数器不可用"
+            return False
+        self._pdh = (win32pdh, query, counters)
+        return True
+
+    def _open_wmi(self) -> bool:
         try:
             import pythoncom
             import win32com.client
@@ -325,31 +387,68 @@ class AcpiThermalSource:
             self._svc = win32com.client.GetObject("winmgmts:" + chr(92) * 2 + "." + chr(92)
                                                   + "root" + chr(92) + "wmi")
         except Exception as exc:
-            self.error = f"pywin32/WMI 不可用: {type(exc).__name__}"
+            self.error = "pywin32/WMI 不可用: %s" % type(exc).__name__
             return False
-        self.update()
-        with self._lock:
-            self.available = bool(self._values)
-        if not self.available and not self.error:
-            self.error = "ACPI 热区没有返回温度（通常需要管理员权限）"
-        return self.available
+        rows, err = self._read_wmi()
+        if err:
+            self.error = err
+            return False
+        return bool(rows)
 
-    def close(self) -> None:
-        self._svc = None
-        self.available = False
-        try:
-            import pythoncom
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
-
+    # ---------------------------------------------------------------- 读取
     def update(self) -> None:
-        if self._svc is None:
-            return
         now = time.perf_counter()
         if now - self._last < self._min_interval:
             return
         self._last = now
+        if self.channel == "pdh":
+            rows, err = self._read_pdh()
+        elif self.channel == "wmi":
+            rows, err = self._read_wmi()
+        else:
+            return
+        if err:
+            with self._lock:
+                self._values = {}
+            self.error = err
+            return
+        if not rows:
+            with self._lock:
+                self._values = {}
+            self.error = "热区无有效读数"
+            return
+        # 一台机器可能有多个热区：优先名字里带 CPU/THRM/PCK/TZ0 的，否则取最高的那个
+        prefer = [r for r in rows if any(k in r[0].upper() for k in ("THRM", "CPU", "PCK", "TZ0"))]
+        chosen = prefer[0] if prefer else max(rows, key=lambda r: r[1])
+        self.zone = chosen[0]
+        with self._lock:
+            self._values = {"cpu_temp": round(chosen[1], 1), "cpu_temp_source": 1.0}
+            self._last_ok = time.perf_counter()
+        self.error = None
+
+    def _read_pdh(self):
+        if self._pdh is None:
+            return [], "PDH 未初始化"
+        pdh, query, counters = self._pdh
+        try:
+            pdh.CollectQueryData(query)
+        except Exception as exc:
+            return [], "PDH 采集失败: %s" % type(exc).__name__
+        rows = []
+        for inst, handle in counters:
+            try:
+                _t, raw = pdh.GetFormattedCounterValue(handle, pdh.PDH_FMT_DOUBLE)
+            except Exception:
+                continue
+            if isinstance(raw, (int, float)) and raw > 0:
+                temp = raw - 273.15                      # 计数器直接以开尔文返回
+                if 0 < temp < 120:
+                    rows.append((str(inst), temp))
+        return rows, None
+
+    def _read_wmi(self):
+        if self._svc is None:
+            return [], "WMI 未初始化"
         try:
             rows = []
             for obj in self._svc.InstancesOf("MSAcpi_ThermalZoneTemperature"):
@@ -360,7 +459,7 @@ class AcpiThermalSource:
                         try:
                             raw = pr.Value
                             if isinstance(raw, (int, float)) and raw > 0:
-                                temp = raw / 10.0 - 273.15
+                                temp = raw / 10.0 - 273.15      # 开尔文千分位
                         except Exception:
                             temp = None
                     elif pr.Name == "InstanceName":
@@ -372,23 +471,46 @@ class AcpiThermalSource:
                     rows.append((instance, temp))
         except Exception as exc:
             code = getattr(exc, "hex_exc", None)
-            self.error = f"WMI 读取失败: {type(exc).__name__}"
+            msg = "WMI 读取失败: %s" % type(exc).__name__
             if code == 0x80041003:
-                self.error += "（拒绝访问：需要管理员权限）"
-            return
-        if not rows:
-            return
-        # 一台机器可能有多个热区：优先名字里带 CPU/THRM/PCK 的，否则取最高的那个
-        prefer = [r for r in rows if any(k in r[0].upper() for k in ("THRM", "CPU", "PCK", "TZ0"))]
-        chosen = prefer[0] if prefer else max(rows, key=lambda r: r[1])
-        self.zone = chosen[0]
-        with self._lock:
-            self._values = {"cpu_temp": round(chosen[1], 1),
-                            "cpu_temp_source": 1.0}     # 标记：来自 ACPI 热区
+                msg += "（拒绝访问：需要管理员权限）"
+            elif code == 0x80041021:
+                msg += "（WMI 超时）"
+            return [], msg
+        return rows, None
 
     def snapshot(self) -> dict[str, float]:
         with self._lock:
+            if not self._values:
+                return {}
+            if time.perf_counter() - self._last_ok > self.STALE_LIMIT:
+                return {}                                # 超过 3 秒没有成功读数：按无数据对待
             return {k: v for k, v in self._values.items() if k != "cpu_temp_source"}
+
+    def close(self) -> None:
+        if self._pdh is not None:
+            pdh, query, counters = self._pdh
+            for _inst, handle in counters:
+                try:
+                    pdh.RemoveCounter(handle)
+                except Exception:
+                    pass
+            try:
+                pdh.CloseQuery(query)
+            except Exception:
+                pass
+            self._pdh = None
+        was_wmi = self.channel == "wmi"
+        self._svc = None
+        self.available = False
+        self.channel = None
+        if was_wmi:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
 
 class SensorHub:
     """把所有数据源合并成 UI 直接可用的字典。阻塞操作全部放在独立线程。"""
@@ -398,11 +520,12 @@ class SensorHub:
         self.cpu_temp_source = cpu_temp_source
         self.admin = is_admin()
         self.lhm = LhmSource()
-        self.acpi = AcpiThermalSource()
+        self.thermal = ThermalZoneSource()
         self.nvsmi: NvsmiSource | None = None
         self.status: dict[str, object] = {"admin": self.admin, "lhm": False,
                                           "lhm_error": None, "nvsmi": False,
-                                          "acpi": False, "acpi_zone": None,
+                                          "thermal": False, "thermal_channel": None,
+                                          "thermal_zone": None, "thermal_error": None,
                                           "cpu_temp_from": None}
         try:
             import psutil  # noqa: F401
@@ -426,18 +549,18 @@ class SensorHub:
             self.status["nvsmi"] = self.nvsmi.available
 
         # CPU 温度：优先使用驱动读数，不可用时改用 ACPI 热区
-        need_acpi = self.cpu_temp_source in ("auto", "acpi")
-        if need_acpi:
+        if self.cpu_temp_source in ("auto", "acpi"):
             lhm_has_cpu_temp = False
             if self.lhm.available and self.cpu_temp_source != "acpi":
                 self.lhm.update()
                 lhm_has_cpu_temp = self.lhm.snapshot().get("cpu_temp") is not None
             if not lhm_has_cpu_temp:
-                if self.acpi.open():
-                    self.status["acpi"] = True
-                    self.status["acpi_zone"] = self.acpi.zone
+                if self.thermal.open():
+                    self.status["thermal"] = True
+                    self.status["thermal_channel"] = self.thermal.channel
+                    self.status["thermal_zone"] = self.thermal.zone
                 else:
-                    self.status["acpi_error"] = self.acpi.error
+                    self.status["thermal_error"] = self.thermal.error
         self._thread.start()
 
     def stop(self) -> None:
@@ -447,7 +570,7 @@ class SensorHub:
         except Exception:
             pass
         self.lhm.close()      # 立刻释放 ring0 驱动，不留后台
-        self.acpi.close()
+        self.thermal.close()
 
     def set_interval_ms(self, interval_ms: int) -> None:
         self.interval = max(0.25, interval_ms / 1000.0)
@@ -477,15 +600,19 @@ class SensorHub:
                 lhm_cpu_temp = vals.get("cpu_temp")
             out.update(vals)
 
-        if self.acpi.available:
-            self.acpi.update()
-            acpi_vals = self.acpi.snapshot()
-            if acpi_vals.get("cpu_temp") is not None and (
+        if self.thermal.available:
+            self.thermal.update()
+            tz_vals = self.thermal.snapshot()
+            if tz_vals.get("cpu_temp") is not None and (
                     self.cpu_temp_source == "acpi" or lhm_cpu_temp is None):
-                out["cpu_temp"] = acpi_vals["cpu_temp"]
-                self.status["cpu_temp_from"] = "acpi:" + str(self.acpi.zone)
+                out["cpu_temp"] = tz_vals["cpu_temp"]
+                self.status["cpu_temp_from"] = "%s:%s" % (self.thermal.channel, self.thermal.zone)
             elif lhm_cpu_temp is not None:
                 self.status["cpu_temp_from"] = "lhm"
+            if self.thermal.error:
+                self.status["thermal_error"] = self.thermal.error
+            else:
+                self.status["thermal_error"] = None
 
         if not self.lhm.available and self.nvsmi is not None:
             self.nvsmi.update()

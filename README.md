@@ -18,8 +18,8 @@ Lightweight transparent performance overlay for Windows games — live CPU/GPU t
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.0.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.0.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.1.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.1.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -29,10 +29,10 @@ Lightweight transparent performance overlay for Windows games — live CPU/GPU t
 
 1. 双击 `安装依赖.bat`（首次使用执行一次，安装 psutil、pythonnet、pywin32、pillow）。
 2. 双击 `启动.bat` 即可使用。
-3. 需要 CPU 温度时改用 `启动(管理员).bat`，在 UAC 中选择「是」。
+3. 需要 CPU 频率、CPU 功耗或驱动级 CPU 温度时改用 `启动(管理员).bat`，在 UAC 中选择「是」。
 
 exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要求已写入程序清单，每次启动都会请求管理员权限，
-因为 CPU 温度需要读取 CPU 内部寄存器或 ACPI 热区，普通权限下系统拒绝访问。其余项目不需要管理员权限。
+目的是优先取得驱动级 CPU 温度；热区计数器本身不需要管理员权限，所以脚本版在普通权限下也能看到 CPU 温度。
 
 首次运行如果没有看到悬浮窗，检查系统托盘（Windows 11 上可能被收进通知区域的折叠菜单）。
 
@@ -78,14 +78,16 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 |---|---|---|
 | CPU 占用率、内存 | psutil（系统接口） | 不需要 |
 | GPU 温度、占用率、显存、功耗 | LibreHardwareMonitorLib，进程内调用厂商驱动接口 | 不需要 |
-| CPU 温度 | LibreHardwareMonitorLib 驱动读数，不可用时改用 WMI 的 ACPI 热区温度 | 需要管理员 |
+| CPU 温度 | LibreHardwareMonitorLib 驱动读数；不可用时改用 ACPI 热区温度（系统性能计数器） | 驱动读数需要管理员，热区不需要 |
 | 帧率 | Intel PresentMon 子进程，按 ETW 逐帧统计呈现事件 | 不需要 |
 
 帧率按目标进程的实际呈现次数计算，窗口、无边框窗口与独占全屏都能统计；默认跟随前台窗口进程，
 可改为跟随当前出帧最多的进程。画面静止时帧率为 0 属于正常情况。
 
-部分平台在 Windows 11 下无法加载 ring0 硬件监测驱动，此时 CPU 温度自动改用 ACPI 热区数值。
-热区温度与 CPU 封装温度不完全等价，通常略低、变化更平缓，适合作为趋势参考；
+热区读数优先走系统性能计数器（win32pdh），普通权限即可读取，也不依赖 WMI 服务；个别系统没有该计数器时自动回退到 WMI 的 `MSAcpi_ThermalZoneTemperature`（需要管理员权限）。
+部分平台在 Windows 11 下无法加载 ring0 硬件监测驱动，此时 CPU 温度自动改用热区数值。
+热区温度与 CPU 封装温度不完全等价，通常略低且变化更平缓，适合作为趋势参考。
+任何一次读取失败都会立即显示 `--`，不会继续显示上一次的历史数值。
 可在设置 → 显示项 → 「CPU 温度来源」中强制指定驱动 / 热区 / 关闭。
 
 ## 资源占用
