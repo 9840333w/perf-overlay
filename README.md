@@ -18,8 +18,8 @@ Lightweight transparent performance overlay for Windows games — live CPU/GPU t
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.1.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.1.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.2.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.2.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -61,14 +61,16 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 
 设置面板共五页：显示项、外观、帧率与采样、位置与热键、状态。详细参数见 [使用说明.md](使用说明.md)。
 
+文字描边默认开启，即在笔画外垫 1px 暗边，亮画面上更清晰；如果觉得大字号下笔画显脏，可以在 设置 → 外观 → 颜色 里取消勾选「文字描边」，关掉后阴影颜色一并停用。
+
 <table>
 <tr>
 <td width="470"><img src="docs/settings-items.png" alt="设置面板：显示项"></td>
 <td width="470"><img src="docs/settings-appearance.png" alt="设置面板：外观"></td>
 </tr>
 <tr>
-<td align="center">显示项：勾选项目、逐项数值颜色、紧凑标签、文字描边、超阈值变红、CPU 温度来源</td>
-<td align="center">外观：字号、行距、横排项间距、透明度、排列方式、背景、温度单位、内存显示方式与实时预览</td>
+<td align="center">显示项：勾选项目、逐项数值颜色、紧凑标签、超阈值变红、CPU 温度来源</td>
+<td align="center">外观：字号、行距、横排项间距、透明度、排列方式、背景、温度单位、内存显示方式、文字描边开关与实时预览</td>
 </tr>
 </table>
 

@@ -881,7 +881,6 @@ class Overlay:
         extra = ttk.LabelFrame(parent, text="可读性")
         extra.pack(fill="x", pady=(10, 0))
         for label, key in (("紧凑标签（CPU℃ / CPU% / FPS，占用更小）", "compact_labels"),
-                           ("文字描边（透明背景下更易读）", "text_shadow"),
                            ("超阈值时数值变红提醒", "warn_enabled")):
             var = self._bool_var(key)
             ttk.Checkbutton(extra, text=label, variable=var,
@@ -958,6 +957,16 @@ class Overlay:
 
         colors = ttk.LabelFrame(parent, text="颜色")
         colors.pack(fill="x", pady=(10, 0))
+
+        # 文字描边开关放在这里：它决定笔画锐利还是带暗边，和阴影颜色是同一件事
+        svar = self._bool_var("text_shadow")
+        self._shadow_check = ttk.Checkbutton(
+            colors, text="文字描边（笔画外垫 1px 暗边，亮画面上更清晰；关掉后笔画更锐利）",
+            variable=svar,
+            command=lambda v=svar: (self._set_flag("text_shadow", v.get()),
+                                    self._sync_shadow_swatch()))
+        self._shadow_check.pack(anchor="w", padx=8, pady=(6, 0))
+
         crow = ttk.Frame(colors)
         crow.pack(fill="x", padx=8, pady=4)
         for label, key in (("标签颜色", "label_color"), ("底板颜色", "panel_color"),
@@ -965,7 +974,10 @@ class Overlay:
             ttk.Label(crow, text=label).pack(side="left")
             sw = tk.Label(crow, width=6, relief="solid", bd=1, bg=self.cfg[key], cursor="hand2")
             sw.pack(side="left", padx=(2, 12))
-            sw.bind("<Button-1>", lambda _e, k=key, w=sw: self._pick_color(k, w))
+            sw.bind("<Button-1>", lambda _e, k=key, w=sw: self._pick_color_guarded(k, w))
+            if key == "shadow_color":
+                self._shadow_sw = sw
+        self._sync_shadow_swatch()
 
         # 实时预览：改任何外观都能马上看到效果
         prev = ttk.LabelFrame(parent, text="实时预览")
@@ -1267,6 +1279,20 @@ class Overlay:
         except Exception:
             pass
         return hexa
+
+    def _pick_color_guarded(self, key: str, widget) -> None:
+        """阴影描边关掉时，阴影颜色不再可点，避免调了没效果。"""
+        if key == "shadow_color" and not bool(self.cfg.get("text_shadow", True)):
+            return
+        self._pick_color(key, widget)
+
+    def _sync_shadow_swatch(self) -> None:
+        widget = getattr(self, "_shadow_sw", None)
+        if widget is None:
+            return
+        on = bool(self.cfg.get("text_shadow", True))
+        widget.configure(relief="solid" if on else "raised",
+                         cursor="hand2" if on else "arrow")
 
     def _pick_color(self, key: str, swatch) -> None:
         target = {"__warn__": "warn_color", "__label__": "label_color"}.get(key, key)
