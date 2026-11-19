@@ -18,8 +18,8 @@ Lightweight transparent performance overlay for Windows games — live CPU/GPU t
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.2.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.2.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.3.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.3.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -86,6 +86,9 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 也就是说 **7–10 磅最锐利**（8–10 磅完全没有过渡像素），小于 7 磅或大于 10 磅都会偏软。
 如果觉得字发糊，先把字号调回 7–10 磅（滚轮即可调整），再考虑关闭文字描边——描边只在抗锯齿区间会加重这种
 感觉，点阵区间不受它影响。字号超过 10 磅后的柔和边缘属于字体渲染特性，不是取色、描边或透明背景造成的问题。
+
+置顶是自愈的：程序每 2 秒沿 z 序检查一次，发现被普通窗口压住就自动重申置顶，不需要手动设置。
+如果长时间仍看不到悬浮窗，一般是独占全屏的游戏独占了显示输出，把游戏改成无边框窗口即可。
 
 ## 数据来源
 

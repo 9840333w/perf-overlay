@@ -55,6 +55,8 @@ WS_EX_TRANSPARENT = 0x00000020
 WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TOPMOST = 0x00000008
+GW_HWNDPREV = 3
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
@@ -345,6 +347,7 @@ class Overlay:
 
         self.root.after(120, self._tick)
         self.root.after(80, self._poll_hotkeys)
+        self.root.after(2000, self._watch_zorder)
 
     # -------------------------------------------------------------- 配置
     def _load_config(self) -> dict:
@@ -456,6 +459,39 @@ class Overlay:
                                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
         except Exception:
             pass
+
+    def _watch_zorder(self) -> None:
+        """置顶带的顺序可能被系统重排：样式位还在，但窗口已经掉到普通窗口下面。
+        每 2 秒沿 z 序往上查一次，只要发现有非置顶的可见窗口压在自己上面就重申置顶。
+        只改 z 序，位置和大小都不动，用户无感。"""
+        try:
+            if self.cfg.get("always_on_top") and self.hwnd and self._visible:
+                if self._is_covered():
+                    user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0,
+                                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+                    now = time.time()
+                    if now - getattr(self, "_z_log_at", 0.0) > 60:
+                        self._z_log_at = now
+                        log("检测到悬浮窗被普通窗口压住，已重申置顶")
+        except Exception as exc:
+            log(f"置顶检查失败: {type(exc).__name__}: {exc}")
+        self.root.after(2000, self._watch_zorder)
+
+    def _is_covered(self) -> bool:
+        """沿 GW_HWNDPREV 往 z 序上方走：遇到非置顶的可见大窗口即视为被压住。"""
+        hwnd = user32.GetWindow(self.hwnd, GW_HWNDPREV)
+        for _ in range(200):
+            if not hwnd:
+                return False
+            if bool(user32.IsWindowVisible(hwnd)):
+                ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+                if not (ex & WS_EX_TOPMOST):
+                    r = wintypes.RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(r))
+                    if (r.right - r.left) * (r.bottom - r.top) > 4096:
+                        return True
+            hwnd = user32.GetWindow(hwnd, GW_HWNDPREV)
+        return False
 
     # -------------------------------------------------------------- 字体
     def _resolve_font(self) -> str:
