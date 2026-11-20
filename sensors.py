@@ -34,6 +34,33 @@ VENDOR_DIR = os.path.join(BASE_DIR, "vendor", "lhm")
 # 需要 ring0 访问权限（管理员）的 CPU 传感器
 CPU_ONLY_WITH_ADMIN = ("cpu_temp", "cpu_power", "cpu_clock")
 
+# 传感器名称随厂商、型号和库版本变化（Intel 用 CPU Package、AMD 用 Core (Tctl/Tdie)、
+# 核显用 D3D 3D……），所以匹配规则是「传感器类型 + 名称包含的关键字」，按别名先后取第一个。
+# 每条规则：(键, 类型, 别名(小写包含), 排除词)；aliases 为空表示必须精确命中 total 之类的名称。
+CPU_RULES = (
+    ("cpu_temp", "Temperature",
+     ("cpu package", "core (tctl/tdie)", "core (tctl)", "core max", "cpu (proximity)",
+      "cpu proximity", "core (tcc)", "package", "proximity"),
+     ("utilization", "load")),
+    ("cpu_load", "Load", ("cpu total", "total cpu", "total"), ("core", "memory", "power")),
+    ("cpu_power", "Power",
+     ("cpu package", "cpu ia", "cpu gt", "package", "cpu total", "power"), ()),
+)
+
+GPU_RULES = (
+    ("gpu_temp", "Temperature", ("gpu core", "core", "temperature", "edge", "hot spot"), ()),
+    ("gpu_load", "Load", ("gpu core", "d3d 3d", "core", "3d"), ("memory", "vram")),
+    ("gpu_power", "Power", ("gpu package", "gpu power", "power"), ()),
+    ("gpu_mem_used", "SmallData",
+     ("gpu memory used", "d3d dedicated memory used", "memory used", "dedicated memory"),
+     ("total", "free")),
+    ("gpu_mem_total", "SmallData",
+     ("gpu memory total", "d3d dedicated memory total", "memory total", "dedicated memory size"), ()),
+)
+
+# 别名全落空时，允许按类型兜底取一个同类传感器的键（宁可读数来源略偏，也不要整项显示 --）
+TYPE_FALLBACK = ("cpu_temp", "gpu_temp", "gpu_load", "gpu_power")
+
 # 这些量本该随负载变化：长时间一个非零数不动，说明数据源没在刷新。
 # 占用率类不在其中——空闲时长时间恒定 0% 是真实读数，不是数据源卡住。
 VARIABLE_KEYS = ("cpu_temp", "gpu_temp", "cpu_power", "gpu_power", "cpu_clock")
@@ -86,17 +113,20 @@ class LhmSource:
         self.stalled = False
         self._computer = None
         self._update_targets: list = []
-        self._sensors: list[tuple[str, object, int]] = []   # (key, sensor, 目标序号)
-        self._clocks: list[tuple[object, int]] = []
+        self._sensors: list[tuple[str, object, int, int]] = []   # (key, sensor, 目标序号, 厂商优先级)
+        self._clocks: list[tuple[object, int, int]] = []
+        self._gpu_of: dict[int, str] = {}
         self._lock = threading.Lock()
         self._values: dict[str, float] = {}
         self._last_ok = 0.0
         self._busy = False
+        self._closed = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     # ---------------------------------------------------------------- 打开
     def open(self) -> bool:
+        self._closed = False
         try:
             import clr  # pythonnet
         except Exception as exc:
@@ -128,58 +158,14 @@ class LhmSource:
             self.error = f"初始化失败: {type(exc).__name__}: {exc}"
             return False
 
-        cpus, gpus = [], []
-        try:
-            for hw in computer.Hardware:
-                kind = _enum_name(hw, "HardwareType")
-                if kind == "Cpu":
-                    cpus.append(hw)
-                elif kind.startswith("Gpu"):
-                    gpus.append((kind, hw))
-        except Exception as exc:
-            self.error = f"枚举硬件失败: {exc}"
-            return False
-
-        # GPU 优先独显（NVIDIA > AMD > Intel 核显），核显一般没有温度传感器
-        order = {"GpuNvidia": 0, "GpuAmd": 1, "GpuIntel": 2}
-        gpus.sort(key=lambda x: order.get(x[0], 9))
-        gpu = gpus[0][1] if gpus else None
-
-        self._sensors, self._clocks, self._update_targets = [], [], []
-        if cpus:
-            cpu = cpus[0]
-            idx = len(self._update_targets)
-            self._update_targets.append(cpu)
-            self._sensors += self._pick(cpu, idx, [
-                (("Temperature", "cpu package"), "cpu_temp"),
-                (("Temperature", "core (tctl/tdie)"), "cpu_temp"),
-                (("Temperature", "core max"), "cpu_temp"),
-                (("Load", "cpu total"), "cpu_load"),
-                (("Power", "cpu package"), "cpu_power"),
-            ])
-            for s in self._list(cpu):
-                if _enum_name(s, "SensorType") == "Clock" and "bus" not in str(s.Name).lower():
-                    self._clocks.append((s, idx))
-
-        if gpu is not None:
-            idx = len(self._update_targets)
-            self._update_targets.append(gpu)
-            self._sensors += self._pick(gpu, idx, [
-                (("Temperature", "gpu core"), "gpu_temp"),
-                (("Load", "gpu core"), "gpu_load"),
-                (("Power", "gpu package"), "gpu_power"),
-                (("Power", "gpu power"), "gpu_power"),
-                (("SmallData", "gpu memory used"), "gpu_mem_used"),
-                (("SmallData", "d3d dedicated memory used"), "gpu_mem_used"),
-                (("SmallData", "gpu memory total"), "gpu_mem_total"),
-            ])
+        if self._closed:                     # 用户在这期间退出了：立刻卸载，不留驱动
             try:
-                self.gpu_name = str(gpu.Name)
+                computer.Close()
             except Exception:
                 pass
+            return False
 
-        if not self._sensors and not self._clocks:
-            self.error = "未读到可用传感器"
+        if not self._select(computer.Hardware):
             return False
 
         self._computer = computer
@@ -206,24 +192,89 @@ class LhmSource:
         except Exception:
             return []
 
-    def _pick(self, hw, idx: int, rules) -> list:
-        """按 (传感器类型, 名称) 优先级列表挑选第一个命中的传感器。"""
-        picked = []
+    def _select(self, hardware) -> bool:
+        """把枚举到的硬件按厂商优先级分组，逐台挑传感器。
+
+        独显和核显都注册为采集目标：混合显卡笔记本的独显在空闲时可能完全读不到值，
+        这时同一个键自动改用核显的读数，而不是显示 --。
+        """
+        cpus, gpus = [], []
+        try:
+            for hw in hardware:
+                kind = _enum_name(hw, "HardwareType")
+                if kind == "Cpu":
+                    cpus.append(hw)
+                elif kind.startswith("Gpu"):
+                    gpus.append((kind, hw))
+        except Exception as exc:
+            self.error = f"枚举硬件失败: {exc}"
+            return False
+
+        order = {"GpuNvidia": 0, "GpuAmd": 1, "GpuIntel": 2}
+        gpus.sort(key=lambda x: order.get(x[0], 9))
+
+        self._sensors, self._clocks, self._update_targets = [], [], []
+        self._gpu_of = {}                                  # 显卡优先级 -> 显卡名
+        for prio, cpu in enumerate(cpus[:2]):              # 双路机器也只用前两颗
+            idx = len(self._update_targets)
+            self._update_targets.append(cpu)
+            self._sensors += self._pick(cpu, idx, prio, CPU_RULES)
+            for s in self._list(cpu):
+                if _enum_name(s, "SensorType") == "Clock" and "bus" not in str(s.Name).lower():
+                    self._clocks.append((s, idx, prio))
+
+        for prio, (_kind, gpu) in enumerate(gpus[:3]):
+            idx = len(self._update_targets)
+            self._update_targets.append(gpu)
+            self._gpu_of[prio] = self._gpu_label(gpu)
+            self._sensors += self._pick(gpu, idx, prio, GPU_RULES)
+        if self._gpu_of.get(0):
+            self.gpu_name = self._gpu_of[0]
+
+        if not self._sensors and not self._clocks:
+            self.error = "未读到可用传感器"
+            return False
+        return True
+
+    @staticmethod
+    def _gpu_label(hw) -> str:
+        try:
+            return str(hw.Name)[:24]
+        except Exception:
+            return ""
+
+    def _pick(self, hw, idx: int, prio: int, rules) -> list:
+        """按「类型 + 名称包含关键字」挑传感器，同一键只取第一个命中的别名。"""
+        picked: list = []
+        taken: set[str] = set()
         sensors = self._list(hw)
-        for (stype, keyword), key in rules:
-            if any(k == key for k, _s, _i in picked):
+        for key, stype, aliases, excludes in rules:
+            if key in taken:
                 continue
-            for s in sensors:
-                if _enum_name(s, "SensorType") != stype:
-                    continue
-                if str(s.Name).strip().lower() != keyword:
-                    continue
-                picked.append((key, s, idx))
-                break
+            hit = None
+            for alias in aliases:
+                for s in sensors:
+                    if _enum_name(s, "SensorType") != stype:
+                        continue
+                    name = str(s.Name).strip().lower()
+                    if alias not in name or any(x in name for x in excludes):
+                        continue
+                    hit = s
+                    break
+                if hit is not None:
+                    break
+            if hit is None and key in TYPE_FALLBACK:
+                hit = next((s for s in sensors
+                            if _enum_name(s, "SensorType") == stype
+                            and not any(x in str(s.Name).lower() for x in excludes)), None)
+            if hit is not None:
+                taken.add(key)
+                picked.append((key, hit, idx, prio))
         return picked
 
     # ---------------------------------------------------------------- 关闭
     def close(self) -> None:
+        self._closed = True
         self._stop.set()
         thread = self._thread
         self._thread = None
@@ -267,30 +318,45 @@ class LhmSource:
                     ok[i] = False
                     self.hw_status[self._hw_label(i)] = "更新失败: %s" % type(exc).__name__
             found: dict[str, float] = {}
-            for key, sensor, idx in self._sensors:
+            best: dict[str, tuple[int, float]] = {}
+            for key, sensor, idx, prio in self._sensors:
                 if not ok.get(idx):
                     continue                     # 本轮没刷新：不读缓存值
                 try:
                     value = sensor.Value
                     if value is None:
                         continue
-                    found[key] = float(value)
+                    value = float(value)
                 except Exception:
                     continue
-            best = None
-            for s, idx in self._clocks:
+                cur = best.get(key)
+                if cur is None or prio < cur[0]:
+                    best[key] = (prio, value)
+            win_gpu = None
+            for key in ("gpu_temp", "gpu_load", "gpu_power", "gpu_mem_used"):
+                if key in best:
+                    found[key] = best[key][1]
+                    if win_gpu is None:
+                        win_gpu = best[key][0]
+            for key, (_prio, value) in best.items():
+                if key not in found:
+                    found[key] = value
+            if win_gpu is not None and self._gpu_of.get(win_gpu):
+                self.gpu_name = self._gpu_of[win_gpu]      # 状态页显示真正在出数的显卡
+            best_clock = None
+            for s, idx, _prio in self._clocks:
                 if not ok.get(idx):
                     continue
                 try:
                     v = s.Value
                     if v is not None:
                         v = float(v)
-                        if best is None or v > best:
-                            best = v
+                        if best_clock is None or v > best_clock:
+                            best_clock = v
                 except Exception:
                     continue
-            if best is not None:
-                found["cpu_clock"] = best / 1000.0      # MHz -> GHz
+            if best_clock is not None:
+                found["cpu_clock"] = best_clock / 1000.0      # MHz -> GHz
 
             if any(ok.values()):
                 self._last_ok = time.perf_counter()
@@ -665,6 +731,7 @@ class SensorHub:
             "lhm_stalled": False, "nvsmi": False, "nvsmi_error": None,
             "thermal": False, "thermal_channel": None, "thermal_zone": None,
             "thermal_error": None, "cpu_temp_from": None, "stale_keys": [],
+            "probing": True,
         }
         try:
             import psutil  # noqa: F401
@@ -676,35 +743,65 @@ class SensorHub:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="sampler")
+        self._boot: threading.Thread | None = None
+        self._nv_tried = False
         self._watch: dict[str, list[tuple[float, float, float]]] = {}   # (时刻, 值, cpu占用)
 
     # ---------------------------------------------------------------- 生命周期
     def start(self) -> None:
-        if self.lhm.open():
-            self.status["lhm"] = True
-            self.status["gpu_name"] = self.lhm.gpu_name
-        else:
-            self.status["lhm_error"] = self.lhm.error
+        """界面先出来，硬件探测放后台。
+
+        不同机器的驱动初始化时间差别极大（Intel 核显几百毫秒，带 RGB 控制器的机器
+        Computer.Open() 可能十几秒，WMI 热区还可能超时），同步等待会让用户以为程序卡死。
+        """
+        self._thread.start()
+        self._boot = threading.Thread(target=self._open_sources, daemon=True, name="probe")
+        self._boot.start()
+
+    def _open_sources(self) -> None:
+        try:
+            if self.lhm.open():
+                self.status["lhm"] = True
+                self.status["gpu_name"] = self.lhm.gpu_name
+            else:
+                self.status["lhm_error"] = self.lhm.error
+
+            # CPU 温度：优先使用驱动读数，不可用时改用 ACPI 热区
+            if self.cpu_temp_source in ("auto", "acpi"):
+                lhm_has_cpu_temp = False
+                if self.lhm.available and self.cpu_temp_source != "acpi":
+                    lhm_has_cpu_temp = self.lhm.snapshot().get("cpu_temp") is not None
+                if not lhm_has_cpu_temp:
+                    if self.thermal.open():
+                        self.status["thermal"] = True
+                        self.status["thermal_channel"] = self.thermal.channel
+                        self.status["thermal_zone"] = self.thermal.zone
+                    else:
+                        self.status["thermal_error"] = self.thermal.error
+        finally:
+            self.status["probing"] = False
+
+    def _ensure_nvsmi(self) -> None:
+        """GPU 项有缺口时才探测 nvidia-smi：没有该命令的机器要几秒才能确认，放后台。"""
+        if self.nvsmi is not None or self._nv_tried:
+            return
+        self._nv_tried = True
+        threading.Thread(target=self._probe_nvsmi, daemon=True, name="nvsmi-probe").start()
+
+    def _probe_nvsmi(self) -> None:
+        try:
             self.nvsmi = NvsmiSource()
             self.status["nvsmi"] = self.nvsmi.available
-            self.status["nvsmi_error"] = self.nvsmi.error
-
-        # CPU 温度：优先使用驱动读数，不可用时改用 ACPI 热区
-        if self.cpu_temp_source in ("auto", "acpi"):
-            lhm_has_cpu_temp = False
-            if self.lhm.available and self.cpu_temp_source != "acpi":
-                lhm_has_cpu_temp = self.lhm.snapshot().get("cpu_temp") is not None
-            if not lhm_has_cpu_temp:
-                if self.thermal.open():
-                    self.status["thermal"] = True
-                    self.status["thermal_channel"] = self.thermal.channel
-                    self.status["thermal_zone"] = self.thermal.zone
-                else:
-                    self.status["thermal_error"] = self.thermal.error
-        self._thread.start()
+            self.status["nvsmi_error"] = None if self.nvsmi.available else self.nvsmi.error
+        except Exception as exc:
+            self.nvsmi = None
+            self.status["nvsmi_error"] = "探测失败: %s" % type(exc).__name__
 
     def stop(self) -> None:
         self._stop.set()
+        boot = getattr(self, "_boot", None)
+        if boot is not None and boot.is_alive():
+            boot.join(timeout=3.0)     # 别和正在进行的 open() 抢，否则会漏掉驱动卸载
         try:
             self._thread.join(timeout=2.0)
         except Exception:
@@ -755,7 +852,11 @@ class SensorHub:
             if self.thermal.zone:
                 self.status["thermal_zone"] = self.thermal.zone
 
-        if not self.lhm.available and self.nvsmi is not None:
+        # LHM 在部分机器上看不见独显（驱动版本、混合显卡休眠），只要 GPU 项有缺口就用 nvidia-smi 补
+        gpu_missing = any(out.get(k) is None for k in ("gpu_temp", "gpu_load", "gpu_mem_used"))
+        if gpu_missing:
+            self._ensure_nvsmi()
+        if self.nvsmi is not None and gpu_missing:
             self.nvsmi.update()
             nv = self.nvsmi.snapshot()
             for k, v in nv.items():

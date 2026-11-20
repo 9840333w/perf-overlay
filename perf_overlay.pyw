@@ -338,11 +338,8 @@ class Overlay:
         self._place_from_config()
 
         self.hub.start()
-        st = self.hub.status
-        log(f"启动 pid={os.getpid()} 管理员={st.get('admin')} LHM={st.get('lhm')} "
-            f"热区={st.get('thermal')}/{st.get('thermal_channel')} 热区名={st.get('thermal_zone')} "
-            f"CPU温度来源={st.get('cpu_temp_from') or st.get('thermal_error')} "
-            f"显卡={st.get('gpu_name')}")
+        log(f"启动 pid={os.getpid()} 管理员={is_admin()} 间隔={self.cfg['interval_ms']}ms "
+            f"布局={self.cfg['layout']} 字号={self.cfg['font_size']}（硬件探测在后台进行）")
         if self.cfg["enabled"].get("fps"):
             self.fpsmon.start()
         self._start_hotkeys()
@@ -843,18 +840,22 @@ class Overlay:
                 self._last_colors[key] = color
 
     def _report_health(self) -> None:
-        """数据源状态变化时记一行日志：远程排障只看 运行日志.txt 就能定位是哪一路取不到值。"""
+        """数据源状态一变就记一行日志：远程排障只看 运行日志.txt 就能定位是哪一路取不到值。"""
         st = self.hub.status
-        sig = (bool(st.get("lhm_stalled")), tuple(st.get("stale_keys") or ()))
+        sig = (bool(st.get("lhm")), st.get("thermal_channel"), bool(st.get("lhm_stalled")),
+               tuple(st.get("stale_keys") or ()), bool(st.get("probing")))
         if sig == getattr(self, "_health_sig", None):
             return
         self._health_sig = sig
-        if sig[0] or sig[1]:
-            log("数据源异常：驱动刷新超时=%s 长时间静止已显示 --=%s 各硬件=%s"
-                % (sig[0], list(sig[1]) or "无", st.get("lhm_hw") or "无"))
-        elif getattr(self, "_health_was_bad", False):
-            log("数据源已恢复正常")
-        self._health_was_bad = bool(sig[0] or sig[1])
+        if sig[4]:
+            return                                  # 还在探测硬件，先不写日志
+        log("数据源：驱动=%s 热区=%s CPU温度=%s 显卡=%s 驱动刷新超时=%s 长时间静止=%s 各硬件=%s"
+            % (st.get("lhm") if st.get("lhm") else st.get("lhm_error"),
+               st.get("thermal_channel") or st.get("thermal_error") or "无",
+               st.get("cpu_temp_from") or "无",
+               st.get("gpu_name") or "无",
+               sig[2], list(sig[3]) or "无",
+               st.get("lhm_hw") or "无"))
 
     def _value_color(self, metric: Metric, vals: dict, missing: bool) -> str:
         base = self.cfg["colors"].get(metric.key, metric.color)
@@ -1414,7 +1415,9 @@ class Overlay:
         st = self.hub.status
         lines = []
         lines.append(f"权限：{'管理员' if st.get('admin') else '普通用户（驱动读数不可用，CPU 温度改用热区计数器）'}")
-        if st.get("lhm"):
+        if st.get("probing"):
+            lines.append("温度/占用：正在初始化硬件驱动，部分机器需要十几秒，这期间各项显示 --")
+        elif st.get("lhm"):
             hw = st.get("lhm_hw") or {}
             detail = "；".join(f"{k} {v}" for k, v in hw.items())
             if st.get("lhm_stalled"):
@@ -1428,7 +1431,9 @@ class Overlay:
                          + ("，GPU 已改用 nvidia-smi" if st.get("nvsmi") else "")
                          + (f"（{st.get('nvsmi_error')}）" if st.get("nvsmi_error") else ""))
         from_ = st.get("cpu_temp_from")
-        if from_ == "lhm":
+        if st.get("probing"):
+            lines.append("CPU温度：探测中……")
+        elif from_ == "lhm":
             lines.append("CPU温度：来自 LibreHardwareMonitor 驱动读数。")
         elif st.get("thermal"):
             note = f"；最近一次读取失败：{st.get('thermal_error')}" if st.get("thermal_error") else ""
