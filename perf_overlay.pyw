@@ -1458,7 +1458,7 @@ class Overlay:
         stale = st.get("stale_keys") or []
         if stale:
             names = "、".join(METRIC_BY_KEY[k].name for k in stale if k in METRIC_BY_KEY)
-            lines.append(f"读数冻结的项目：{names} —— 真实传感器在空闲时也会抖动，连续 20 秒一个数不变说明数据源没有刷新，已按无数据处理显示 --")
+            lines.append(f"读数冻结的项目：{names} —— 真实传感器在空闲时也会抖动，连续 90 秒一个数不变说明数据源没有刷新，已按无数据处理显示 --")
         fstat = self.fpsmon.status
         if not self.cfg["enabled"].get("fps"):
             lines.append("帧率：已关闭（勾选后才会启动 presentmon.exe 子进程）")
