@@ -850,12 +850,14 @@ class Overlay:
                bool(st.get("cpu_temp_from")), tuple(sorted((st.get("lhm_hw") or {}).items())))
         if sig == getattr(self, "_health_sig", None):
             return
-        self._health_sig = sig
         if sig[4]:
-            return                                  # 还在探测硬件，先不写日志
+            self._health_sig = sig                    # 还在探测硬件，先不写日志
+            return
         now = time.perf_counter()
         if now - getattr(self, "_health_at", 0.0) < 10.0:
-            return                                  # 限流：来回抖动的来源不会刷屏
+            return          # 限流期间不消费 sig：等窗口过去再补上这一行，否则信息量最少的开头会被吞掉
+        self._health_sig = sig
+        self._health_at = now
         self._health_at = now
         log("数据源：驱动=%s 热区=%s CPU温度=%s 显卡=%s 驱动刷新超时=%s 长时间静止=%s 各硬件=%s"
             % (st.get("lhm") if st.get("lhm") else st.get("lhm_error"),
