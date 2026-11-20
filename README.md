@@ -18,8 +18,8 @@ Lightweight transparent performance overlay for Windows games — live CPU/GPU t
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.3.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.3.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.4.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.4.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -107,6 +107,11 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 热区温度与 CPU 封装温度不完全等价，通常略低且变化更平缓，适合作为趋势参考。
 任何一次读取失败都会立即显示 `--`，不会继续显示上一次的历史数值。
 可在设置 → 显示项 → 「CPU 温度来源」中强制指定驱动 / 热区 / 关闭。
+
+数据源的健壮性按下面三条保证：任何一路硬件调用都放在独立线程里，主循环只取上一次成功的结果，
+所以某一路变慢或挂住不会拖累其他项目；某一路本轮刷新失败就不读它的值（库内部有缓存，直接读会得到一个
+不再变化的历史数字）；本该随负载变化的量如果长时间一动不动，会被判定为数据源未刷新，改显示 `--`，
+直到它重新变化才恢复。具体是哪一路出了问题，设置 → 状态 会写明每个硬件的采集状态。
 
 ## 资源占用
 

@@ -1397,10 +1397,18 @@ class Overlay:
         lines = []
         lines.append(f"权限：{'管理员' if st.get('admin') else '普通用户（驱动读数不可用，CPU 温度改用热区计数器）'}")
         if st.get("lhm"):
-            lines.append(f"温度/占用：LibreHardwareMonitor 已加载，显卡 {st.get('gpu_name') or '未知'}")
+            hw = st.get("lhm_hw") or {}
+            detail = "；".join(f"{k} {v}" for k, v in hw.items())
+            if st.get("lhm_stalled"):
+                lines.append("温度/占用：LibreHardwareMonitor 采集无响应，本轮已跳过（不影响其他项目）"
+                             + (f"；{detail}" if detail else ""))
+            else:
+                lines.append(f"温度/占用：LibreHardwareMonitor 已加载，显卡 {st.get('gpu_name') or '未知'}"
+                             + (f"；{detail}" if detail else ""))
         else:
             lines.append(f"温度/占用：LibreHardwareMonitor 不可用（{st.get('lhm_error')}）"
-                         + ("，GPU 已改用 nvidia-smi" if st.get("nvsmi") else ""))
+                         + ("，GPU 已改用 nvidia-smi" if st.get("nvsmi") else "")
+                         + (f"（{st.get('nvsmi_error')}）" if st.get("nvsmi_error") else ""))
         from_ = st.get("cpu_temp_from")
         if from_ == "lhm":
             lines.append("CPU温度：来自 LibreHardwareMonitor 驱动读数。")
@@ -1414,6 +1422,10 @@ class Overlay:
         else:
             lines.append("CPU温度：两个数据源均无返回值（"
                          f"LHM={st.get('lhm_error')}，热区={st.get('thermal_error')}）")
+        stale = st.get("stale_keys") or []
+        if stale:
+            names = "、".join(METRIC_BY_KEY[k].name for k in stale if k in METRIC_BY_KEY)
+            lines.append(f"读数长时间没有变化的项目：{names} —— 数据源未在刷新，已按无数据处理显示 --")
         fstat = self.fpsmon.status
         if not self.cfg["enabled"].get("fps"):
             lines.append("帧率：已关闭（勾选后才会启动 presentmon.exe 子进程）")
