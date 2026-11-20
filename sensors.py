@@ -239,7 +239,7 @@ class LhmSource:
     @staticmethod
     def _gpu_label(hw) -> str:
         try:
-            return str(hw.Name)[:24]
+            return str(hw.Name).strip()[:32]
         except Exception:
             return ""
 
@@ -379,7 +379,7 @@ class LhmSource:
 
     def _hw_label(self, idx: int) -> str:
         try:
-            return str(self._update_targets[idx].Name)[:24]
+            return str(self._update_targets[idx].Name).strip()[:32]
         except Exception:
             return "硬件%d" % idx
 

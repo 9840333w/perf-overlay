@@ -843,19 +843,24 @@ class Overlay:
         """数据源状态一变就记一行日志：远程排障只看 运行日志.txt 就能定位是哪一路取不到值。"""
         st = self.hub.status
         sig = (bool(st.get("lhm")), st.get("thermal_channel"), bool(st.get("lhm_stalled")),
-               tuple(st.get("stale_keys") or ()), bool(st.get("probing")))
+               tuple(st.get("stale_keys") or ()), bool(st.get("probing")),
+               bool(st.get("cpu_temp_from")), tuple(sorted((st.get("lhm_hw") or {}).items())))
         if sig == getattr(self, "_health_sig", None):
             return
         self._health_sig = sig
         if sig[4]:
             return                                  # 还在探测硬件，先不写日志
+        now = time.perf_counter()
+        if now - getattr(self, "_health_at", 0.0) < 10.0:
+            return                                  # 限流：来回抖动的来源不会刷屏
+        self._health_at = now
         log("数据源：驱动=%s 热区=%s CPU温度=%s 显卡=%s 驱动刷新超时=%s 长时间静止=%s 各硬件=%s"
             % (st.get("lhm") if st.get("lhm") else st.get("lhm_error"),
                st.get("thermal_channel") or st.get("thermal_error") or "无",
                st.get("cpu_temp_from") or "无",
                st.get("gpu_name") or "无",
                sig[2], list(sig[3]) or "无",
-               st.get("lhm_hw") or "无"))
+               dict(sig[6]) or "无"))
 
     def _value_color(self, metric: Metric, vals: dict, missing: bool) -> str:
         base = self.cfg["colors"].get(metric.key, metric.color)
