@@ -482,7 +482,6 @@ class ThermalZoneSource:
 
     name = "acpi-thermalzone"
     PDH_OBJECTS = ("Thermal Zone Information", "热区信息")
-    PDH_COUNTER = "Temperature"
     STALE_LIMIT = 3.0
     LEARN_CYCLES = 12          # 前 12 次采样用于比较各热区的波动
     MIN_SPREAD = 0.5           # 摄氏度：小于这个波动视为不动
@@ -523,38 +522,64 @@ class ThermalZoneSource:
             self.error = "win32pdh 不可用: %s" % type(exc).__name__
             return False
         try:
-            objects = win32pdh.EnumObjects(None, None, 0)
+            objects = win32pdh.EnumObjects(None, None, win32pdh.PERF_DETAIL_WIZARD)
         except Exception as exc:
             self.error = "PDH 枚举失败: %s" % type(exc).__name__
             return False
         obj = next((hint for hint in self.PDH_OBJECTS if hint in objects), None)
         if obj is None:
-            obj = next((n for n in objects if "hermal" in n or "热区" in n), None)
+            obj = next((n for n in objects if "hermal" in n.lower() or "热" in n), None)
         if obj is None:
             self.error = "系统没有 Thermal Zone Information 计数器"
             return False
         try:
-            instances = win32pdh.EnumObjectItems(None, None, obj, win32pdh.PERF_DETAIL_WIZARD)[1]
+            counters, instances = win32pdh.EnumObjectItems(
+                None, None, obj, win32pdh.PERF_DETAIL_WIZARD)
         except Exception as exc:
             self.error = "PDH 计数器枚举失败: %s" % type(exc).__name__
             return False
+
+        # 温度计数器名随本地化与精度变化，逐实例按优先级挑一个可用的（单位在读取时自动识别）
+        cands = self._temp_counter_candidates(counters) or ["Temperature"]
         query = win32pdh.OpenQuery(None)
-        counters = []
+        added = []
         for inst in instances:
-            try:
-                path = win32pdh.MakeCounterPath((None, obj, inst, None, -1, self.PDH_COUNTER))
-                counters.append((inst, win32pdh.AddCounter(query, path)))
-            except Exception:
-                continue
-        if not counters:
+            for cname in cands:
+                try:
+                    path = win32pdh.MakeCounterPath((None, obj, inst, None, -1, cname))
+                    added.append((inst, win32pdh.AddCounter(query, path)))
+                    break
+                except Exception:
+                    continue
+        if not added:
             try:
                 win32pdh.CloseQuery(query)
             except Exception:
                 pass
             self.error = "PDH 热区计数器不可用"
             return False
-        self._pdh = (win32pdh, query, counters)
+        self._pdh = (win32pdh, query, added)
         return True
+
+    @staticmethod
+    def _temp_counter_candidates(counters):
+        """按优先级挑温度计数器名，兼容本地化与高/低精度两种单位。
+
+        实测 Thermal Zone Information 对象通常同时提供 High Precision Temperature
+        （0.1K，读数约 3000）与 Temperature（1K，读数约 300），部分机器可能只有其一，
+        或把名字本地化（如“高精度温度/温度”）。
+        """
+        ranked = []
+        for c in counters:
+            low = c.strip().lower()
+            if "high precision" in low and ("temp" in low or "温" in c):
+                ranked.append((0, c))
+            elif low == "temperature":
+                ranked.append((1, c))
+            elif "temp" in low or "温" in c:
+                ranked.append((2, c))
+        ranked.sort(key=lambda x: x[0])
+        return [c for _p, c in ranked]
 
     def _open_wmi(self) -> bool:
         try:
@@ -646,7 +671,9 @@ class ThermalZoneSource:
             except Exception:
                 continue
             if isinstance(raw, (int, float)) and raw > 0:
-                temp = raw - 273.15                      # 计数器直接以开尔文返回
+                # 不同机器/计数器单位不一致：开尔文约 300，0.1 开尔文约 3000，按大小自动识别
+                kelvin = raw / 10.0 if raw > 1000 else raw
+                temp = kelvin - 273.15
                 if 0 < temp < 120:
                     rows.append((str(inst), temp))
         return rows, None
