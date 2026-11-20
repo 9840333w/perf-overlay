@@ -381,7 +381,8 @@ class Overlay:
         def write() -> None:
             self._save_job = None
             try:
-                parts = self.root.winfo_geometry().split("+")
+                # 窗口还没真正映射时 winfo_geometry 返回 1x1+0+0，别把这种假位置写进配置
+                parts = self.root.winfo_geometry().split("+") if self.root.winfo_ismapped() else []
                 if len(parts) == 3:
                     self.cfg["position"] = [int(parts[1]), int(parts[2])]
             except Exception:
@@ -615,9 +616,10 @@ class Overlay:
         vx, vy, vw, vh = self.virtual_desktop()
         if not pos:
             pos = [vx + max(8, int(vw * 0.02)), vy + max(8, int(vh * 0.02))]
-        self.place_at(int(pos[0]), int(pos[1]), w, h)
+        self.place_at(int(pos[0]), int(pos[1]), w, h, remember=False)
 
-    def place_at(self, x: int, y: int, w: int | None = None, h: int | None = None) -> None:
+    def place_at(self, x: int, y: int, w: int | None = None, h: int | None = None,
+                 remember: bool = True) -> None:
         vx, vy, vw, vh = self.virtual_desktop()
         try:
             w = w or int(self.canvas.cget("width"))
@@ -630,7 +632,8 @@ class Overlay:
             self.root.geometry(f"+{int(x)}+{int(y)}")
         except Exception:
             pass
-        self.save()
+        if remember:
+            self.save()
 
     def anchor(self, where: str) -> None:
         vx, vy, vw, vh = self.virtual_desktop()
