@@ -140,16 +140,18 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 在脚本版源码目录下执行（Windows 命令提示符）：
 
 ```
-pyinstaller --noconfirm --clean --windowed --uac-admin --name 性能悬浮窗 --icon assets\app.ico --noupx ^
-  --hidden-import win32timezone --exclude-module PIL --exclude-module numpy ^
+pyinstaller --noconfirm --clean --windowed --uac-admin --name 性能悬浮窗 --icon assets\tray.ico --noupx ^
+  --hidden-import win32timezone --hidden-import win32pdh ^
+  --exclude-module PIL --exclude-module numpy ^
   --exclude-module win32ui --exclude-module win32print --exclude-module win32inet ^
   --exclude-module win32clipboard --exclude-module win32trace --exclude-module tkinterdnd2 ^
   --exclude-module pygame --exclude-module aiohttp --exclude-module unittest ^
-  --exclude-module setuptools --exclude-module pip perf_overlay.py
+  --exclude-module setuptools --exclude-module pip perf_overlay.pyw
 ```
 
-`vendor\` 与 `assets\` 作为外置文件与 exe 同级放置，不内嵌进单文件包，避免每次运行向临时目录解压。
-注意事项见 [使用说明.md](使用说明.md) 的「构建」一节。
+输出是 onedir 包 `dist\性能悬浮窗\`（exe + `_internal\`），把 `vendor\` 与 `assets\` 放在与 exe 同级即可，
+不内嵌进单文件包，避免每次运行向临时目录解压。各模块的 `BASE_DIR` 已内置冻结感知写法：
+打包后配置、日志与 `vendor\lhm\` 都相对 exe 所在目录解析，脚本版仍相对源码目录解析。
 
 ## 许可
 

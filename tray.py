@@ -11,10 +11,14 @@
 from __future__ import annotations
 
 import os
+import sys
 import queue
 import threading
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 冻结成 exe 后 __file__ 指向包内路径，配置、日志与 vendor 必须与 exe 同级
+BASE_DIR = (os.path.dirname(os.path.abspath(sys.executable))
+            if getattr(sys, "frozen", False)
+            else os.path.dirname(os.path.abspath(__file__)))
 ICON_PATH = os.path.join(BASE_DIR, "assets", "tray.ico")
 
 MENU_ITEMS: list[tuple[str | None, str]] = [

@@ -13,6 +13,7 @@ import csv
 import ctypes
 import io
 import os
+import sys
 import re
 import subprocess
 import threading
@@ -20,7 +21,10 @@ import time
 from collections import defaultdict
 from ctypes import wintypes
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 冻结成 exe 后 __file__ 指向包内路径，配置、日志与 vendor 必须与 exe 同级
+BASE_DIR = (os.path.dirname(os.path.abspath(sys.executable))
+            if getattr(sys, "frozen", False)
+            else os.path.dirname(os.path.abspath(__file__)))
 PM_PATH = os.path.join(BASE_DIR, "vendor", "presentmon", "presentmon.exe")
 SESSION_PREFIX = "PerfOverlayFps"          # 本程序会话名前缀，用于识别自身遗留的会话与子进程
 

@@ -32,7 +32,10 @@ try:
 except Exception:                                  # pywin32 缺失时仍可运行
     TrayIcon = None
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 冻结成 exe 后 __file__ 指向包内路径，配置、日志与 vendor 必须与 exe 同级
+BASE_DIR = (os.path.dirname(os.path.abspath(sys.executable))
+            if getattr(sys, "frozen", False)
+            else os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 LOG_PATH = os.path.join(BASE_DIR, "运行日志.txt")
 
@@ -813,6 +816,7 @@ class Overlay:
 
     def _refresh(self) -> None:
         vals = self.hub.read()
+        self._report_health()
         if self.cfg["enabled"].get("fps"):
             fps, target, low = self.fpsmon.snapshot()
             if fps is not None:
@@ -837,6 +841,20 @@ class Overlay:
                 self.canvas.itemconfig(vids[-1], fill=color)
                 self._last_texts[key] = text
                 self._last_colors[key] = color
+
+    def _report_health(self) -> None:
+        """数据源状态变化时记一行日志：远程排障只看 运行日志.txt 就能定位是哪一路取不到值。"""
+        st = self.hub.status
+        sig = (bool(st.get("lhm_stalled")), tuple(st.get("stale_keys") or ()))
+        if sig == getattr(self, "_health_sig", None):
+            return
+        self._health_sig = sig
+        if sig[0] or sig[1]:
+            log("数据源异常：驱动刷新超时=%s 长时间静止已显示 --=%s 各硬件=%s"
+                % (sig[0], list(sig[1]) or "无", st.get("lhm_hw") or "无"))
+        elif getattr(self, "_health_was_bad", False):
+            log("数据源已恢复正常")
+        self._health_was_bad = bool(sig[0] or sig[1])
 
     def _value_color(self, metric: Metric, vals: dict, missing: bool) -> str:
         base = self.cfg["colors"].get(metric.key, metric.color)

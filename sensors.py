@@ -20,18 +20,23 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import subprocess
 import threading
 import time
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 冻结成 exe 后 __file__ 指向包内路径，配置、日志与 vendor 必须与 exe 同级
+BASE_DIR = (os.path.dirname(os.path.abspath(sys.executable))
+            if getattr(sys, "frozen", False)
+            else os.path.dirname(os.path.abspath(__file__)))
 VENDOR_DIR = os.path.join(BASE_DIR, "vendor", "lhm")
 
 # 需要 ring0 访问权限（管理员）的 CPU 传感器
 CPU_ONLY_WITH_ADMIN = ("cpu_temp", "cpu_power", "cpu_clock")
 
-# 这些量本该随负载变化：长时间一个数不动，说明数据源没在刷新
-VARIABLE_KEYS = ("cpu_temp", "gpu_temp", "gpu_load", "cpu_power", "gpu_power", "cpu_clock")
+# 这些量本该随负载变化：长时间一个非零数不动，说明数据源没在刷新。
+# 占用率类不在其中——空闲时长时间恒定 0% 是真实读数，不是数据源卡住。
+VARIABLE_KEYS = ("cpu_temp", "gpu_temp", "cpu_power", "gpu_power", "cpu_clock")
 STATIC_WINDOW = 60.0        # 秒
 STATIC_LOAD_SPREAD = 15.0   # 这段时间内 CPU 占用至少波动这么多百分点
 
@@ -794,6 +799,10 @@ class SensorHub:
             if not isinstance(value, (int, float)):
                 self._watch.pop(key, None)
                 stale.discard(key)
+                continue
+            if value <= 0:
+                stale.discard(key)              # 0 是合法的空闲读数，不参与静止判定
+                self._watch.pop(key, None)
                 continue
             hist = self._watch.setdefault(key, [])
             prev = hist[-1][1] if hist else None
