@@ -18,8 +18,8 @@ Lightweight transparent performance overlay for Windows games — live CPU/GPU t
 
 | 版本 | 获取方式 | 说明 |
 |---|---|---|
-| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.4.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
-| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.4.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
+| 免安装 exe 版 | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-portable-v1.0.5.zip` | 解压双击 `性能悬浮窗.exe`，目标电脑无需安装 Python（压缩包约 14.8 MB，解压后约 36 MB） |
+| 脚本版（本仓库内容） | [Releases](https://github.com/9840333w/perf-overlay/releases/latest) 中的 `perf-overlay-script-v1.0.5.zip`，或直接下载仓库 ZIP、`git clone` | 需要 Python 3.10 及以上，便于阅读与修改源码 |
 
 两个版本功能一致，配置互相独立，各自在自己的目录下生成 `config.json`。
 
@@ -105,7 +105,7 @@ exe 版：双击 `性能悬浮窗.exe`，在 UAC 中选择「是」。提权要�
 热区读数优先走系统性能计数器（win32pdh），普通权限即可读取，也不依赖 WMI 服务；个别系统没有该计数器时自动回退到 WMI 的 `MSAcpi_ThermalZoneTemperature`（需要管理员权限）。
 部分平台在 Windows 11 下无法加载 ring0 硬件监测驱动，此时 CPU 温度自动改用热区数值。
 热区温度与 CPU 封装温度不完全等价，通常略低且变化更平缓，适合作为趋势参考。
-任何一次读取失败都会立即显示 `--`，不会继续显示上一次的历史数值。
+任何一次读取失败都会立即显示 `--`，不会继续显示上一次的历史数值；读数连续 20 秒不变同样按无数据处理。
 可在设置 → 显示项 → 「CPU 温度来源」中强制指定驱动 / 热区 / 关闭。
 
 ### 不同机器的取数差异
@@ -126,8 +126,10 @@ CPU 占用率与内存，其余各项先显示 `--`，探测完成后自动出�
 
 数据源的健壮性按下面三条保证：任何一路硬件调用都放在独立线程里，主循环只取上一次成功的结果，
 所以某一路变慢或挂住不会拖累其他项目；某一路本轮刷新失败就不读它的值（库内部有缓存，直接读会得到一个
-不再变化的历史数字）；本该随负载变化的量如果长时间一动不动，会被判定为数据源未刷新，改显示 `--`，
-直到它重新变化才恢复（占用率与 0 值属于正常空闲读数，不参与该判定）。具体是哪一路出了问题，设置 → 状态 会写明每个硬件的采集状态。
+不再变化的历史数字）；温度类读数连续 20 秒一个数都不变，直接判定数据源冻结并显示 `--`，直到它重新变化才恢复。
+最后一条的依据是实测：本机空闲时（CPU 占用 2%–14%）ACPI 热区在 95 秒内变化了 81 次，最长一次连续相同只有 2 秒——
+真实传感器不管负载高低都在抖，所以「纹丝不动」本身就是故障，不需要拿负载当前提。
+占用率与 0 值功耗不参与该判定（空闲恒定 0% / 0W 是真实读数）。具体是哪一路出了问题，设置 → 状态 会写明每个硬件的采集状态。
 
 ## 资源占用
 

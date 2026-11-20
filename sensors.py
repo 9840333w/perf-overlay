@@ -61,11 +61,13 @@ GPU_RULES = (
 # 别名全落空时，允许按类型兜底取一个同类传感器的键（宁可读数来源略偏，也不要整项显示 --）
 TYPE_FALLBACK = ("cpu_temp", "gpu_temp", "gpu_load", "gpu_power")
 
-# 这些量本该随负载变化：长时间一个非零数不动，说明数据源没在刷新。
-# 占用率类不在其中——空闲时长时间恒定 0% 是真实读数，不是数据源卡住。
+# 这些量必须有抖动：实测空闲时 ACPI 热区 95 秒内变化 81 次、最长连续相同仅 2 秒，
+# 所以同一个数值连续不变到 FREEZE_LIMIT 就是数据源没刷新，与负载高低无关。
+# 占用率不参与（空闲恒定 0% 是真实读数）；功耗与频率的 0 值也不参与（显卡空闲 0W 合法）。
 VARIABLE_KEYS = ("cpu_temp", "gpu_temp", "cpu_power", "gpu_power", "cpu_clock")
-STATIC_WINDOW = 60.0        # 秒
-STATIC_LOAD_SPREAD = 15.0   # 这段时间内 CPU 占用至少波动这么多百分点
+FREEZE_LIMIT = 20.0                 # 秒：连续不变多久算冻结
+FREEZE_MIN_SAMPLES = 15             # 同时至少采到这么多次，避免开机头几秒误判
+ZERO_OK_KEYS = ("cpu_power", "gpu_power", "cpu_clock")
 
 
 def is_admin() -> bool:
@@ -886,14 +888,13 @@ class SensorHub:
         return out
 
     def _drop_static(self, out: dict[str, object]) -> None:
-        """本该随负载变化的量长时间一动不动 -> 数据源没在刷新，按无数据对待并记录原因。
+        """冻结检测：同一个数值连续不变到阈值就判定数据源没刷新，按无数据处理。
 
-        判定是粘性的：一旦认定某项失效，就持续按无数据处理，直到这个值真的发生变化
-        （说明数据源重新开始刷新）才恢复显示。
+        判据只有时间，不需要「负载先波动」这个前提——真实传感器在空闲时也在抖
+        （实测本机空闲热区 95 秒变化 81 次），所以一个数纹丝不动本身就是故障证据。
+        判定是粘性的：一旦认定冻结就持续按无数据处理，直到该值真的变化才恢复。
         """
         now = time.perf_counter()
-        load = out.get("cpu_load")
-        load = float(load) if isinstance(load, (int, float)) else 0.0
         stale = set(self.status.get("stale_keys") or [])
         for key in VARIABLE_KEYS:
             value = out.get(key)
@@ -901,24 +902,17 @@ class SensorHub:
                 self._watch.pop(key, None)
                 stale.discard(key)
                 continue
-            if value <= 0:
-                stale.discard(key)              # 0 是合法的空闲读数，不参与静止判定
+            if value == 0 and key in ZERO_OK_KEYS:
                 self._watch.pop(key, None)
+                stale.discard(key)              # 0 是合法的空闲读数，不按冻结处理
                 continue
-            hist = self._watch.setdefault(key, [])
-            prev = hist[-1][1] if hist else None
-            hist.append((now, float(value), load))
-            del hist[:-120]
-            if prev is not None and abs(float(value) - prev) > 1e-6:
-                stale.discard(key)          # 值动了：数据源在刷新，恢复正常
+            watch = self._watch.get(key)
+            if watch is None or abs(float(value) - watch[1]) > 1e-6:
+                self._watch[key] = [now, float(value), 1]
+                stale.discard(key)              # 值动了：数据源在刷新
                 continue
-            if len(hist) < 20:
-                continue
-            vals = [v for _t, v, _l in hist]
-            loads = [l for _t, _v, l in hist]
-            if (hist[-1][0] - hist[0][0] >= STATIC_WINDOW
-                    and max(vals) == min(vals)
-                    and max(loads) - min(loads) >= STATIC_LOAD_SPREAD):
+            watch[2] += 1
+            if watch[2] >= FREEZE_MIN_SAMPLES and now - watch[0] >= FREEZE_LIMIT:
                 stale.add(key)
         for key in stale:
             out.pop(key, None)

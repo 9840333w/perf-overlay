@@ -859,7 +859,7 @@ class Overlay:
         self._health_sig = sig
         self._health_at = now
         self._health_at = now
-        log("数据源：驱动=%s 热区=%s CPU温度=%s 显卡=%s 驱动刷新超时=%s 长时间静止=%s 各硬件=%s"
+        log("数据源：驱动=%s 热区=%s CPU温度=%s 显卡=%s 驱动刷新超时=%s 读数冻结=%s 各硬件=%s"
             % (st.get("lhm") if st.get("lhm") else st.get("lhm_error"),
                st.get("thermal_channel") or st.get("thermal_error") or "无",
                st.get("cpu_temp_from") or "无",
@@ -1458,7 +1458,7 @@ class Overlay:
         stale = st.get("stale_keys") or []
         if stale:
             names = "、".join(METRIC_BY_KEY[k].name for k in stale if k in METRIC_BY_KEY)
-            lines.append(f"读数长时间没有变化的项目：{names} —— 数据源未在刷新，已按无数据处理显示 --")
+            lines.append(f"读数冻结的项目：{names} —— 真实传感器在空闲时也会抖动，连续 20 秒一个数不变说明数据源没有刷新，已按无数据处理显示 --")
         fstat = self.fpsmon.status
         if not self.cfg["enabled"].get("fps"):
             lines.append("帧率：已关闭（勾选后才会启动 presentmon.exe 子进程）")
