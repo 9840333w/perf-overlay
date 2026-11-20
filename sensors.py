@@ -61,13 +61,12 @@ GPU_RULES = (
 # 别名全落空时，允许按类型兜底取一个同类传感器的键（宁可读数来源略偏，也不要整项显示 --）
 TYPE_FALLBACK = ("cpu_temp", "gpu_temp", "gpu_load", "gpu_power")
 
-# 这些量必须有抖动：实测空闲时 ACPI 热区 95 秒内变化 81 次、最长连续相同仅 2 秒，
-# 所以同一个数值连续不变到 FREEZE_LIMIT 就是数据源没刷新，与负载高低无关。
-# 占用率不参与（空闲恒定 0% 是真实读数）；功耗与频率的 0 值也不参与（显卡空闲 0W 合法）。
-VARIABLE_KEYS = ("cpu_temp", "gpu_temp", "cpu_power", "gpu_power", "cpu_clock")
-FREEZE_LIMIT = 20.0                 # 秒：连续不变多久算冻结
-FREEZE_MIN_SAMPLES = 15             # 同时至少采到这么多次，避免开机头几秒误判
-ZERO_OK_KEYS = ("cpu_power", "gpu_power", "cpu_clock")
+# 只有温度参与冻结判定：实测空闲时 ACPI 热区 95 秒内变化 81 次、最长连续相同仅 2 秒，
+# 所以温度连续不变到 FREEZE_LIMIT 就是数据源没刷新，与负载高低无关。
+# 占用率、功耗、频率不参与——它们本来就能合法地长时间恒定（空闲 0%、0W、稳定睿频）。
+TEMP_KEYS = ("cpu_temp", "gpu_temp")
+FREEZE_LIMIT = 90.0                 # 秒：温度连续不变多久算冻结（给慢速 BIOS 留余量）
+FREEZE_MIN_SAMPLES = 20             # 同时至少采到这么多次，避免开机头几秒误判
 
 
 def is_admin() -> bool:
@@ -896,15 +895,11 @@ class SensorHub:
         """
         now = time.perf_counter()
         stale = set(self.status.get("stale_keys") or [])
-        for key in VARIABLE_KEYS:
+        for key in TEMP_KEYS:
             value = out.get(key)
             if not isinstance(value, (int, float)):
                 self._watch.pop(key, None)
                 stale.discard(key)
-                continue
-            if value == 0 and key in ZERO_OK_KEYS:
-                self._watch.pop(key, None)
-                stale.discard(key)              # 0 是合法的空闲读数，不按冻结处理
                 continue
             watch = self._watch.get(key)
             if watch is None or abs(float(value) - watch[1]) > 1e-6:
